@@ -12,6 +12,15 @@ python3 -m pip install -r requirements.txt
 
 This runner requires a Tinygrad build that includes `tinygrad.nn.onnx.OnnxRunner`; `requirements.txt` asks for `tinygrad>=0.12.0`. If `probe` reports `installed tinygrad does not provide tinygrad.nn.onnx.OnnxRunner`, install a Tinygrad source/wheel build that contains `tinygrad/nn/onnx.py`.
 
+On Windows, Tinygrad CPU-side JIT compilation expects `clang.exe` on `PATH` unless `CC` points to another working compiler. If every backend fails with `[WinError 2]`, first check:
+
+```powershell
+where clang
+python -c "import shutil; print(shutil.which('clang'))"
+```
+
+Install LLVM/Clang or add its `bin` directory to `PATH` before rerunning the probe.
+
 ## Download Model
 
 The full fp32 ONNX model and tokenizer/config files are expected under `models/lightonai-LateOn`.

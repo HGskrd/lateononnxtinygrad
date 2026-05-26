@@ -139,7 +139,7 @@ def _discover_devices(args: argparse.Namespace) -> dict[str, Any]:
 def _runtime_check(args: argparse.Namespace) -> dict[str, Any]:
   cache_db = args.cache_dir / "runtime_check.db"
   code = (
-    "import importlib.metadata, importlib.util, json\n"
+    "import importlib.metadata, importlib.util, json, os, shutil\n"
     "from pathlib import Path\n"
     "from lateon_tinygrad.env import ensure_tinygrad_cache\n"
     f"ensure_tinygrad_cache(Path({str(cache_db)!r}))\n"
@@ -154,6 +154,8 @@ def _runtime_check(args: argparse.Namespace) -> dict[str, Any]:
     "  'tinygrad_version': version,\n"
     "  'onnx_runner_available': spec is not None,\n"
     "  'onnx_runner_origin': None if spec is None else spec.origin,\n"
+    "  'tools': {name: shutil.which(name) for name in ['clang', 'clang++', 'nvcc', 'ptxas', 'nvdisasm', 'clinfo']},\n"
+    "  'env': {key: os.environ[key] for key in ['CUDA_PATH', 'CC'] if key in os.environ},\n"
     "}))\n"
   )
   completed = subprocess.run([sys.executable, "-c", code], text=True, capture_output=True, check=False)

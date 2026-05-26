@@ -5,6 +5,7 @@ import importlib.metadata
 import json
 import os
 import platform
+import shutil
 import sys
 import time
 import traceback
@@ -24,7 +25,12 @@ ENV_KEYS = (
   "NOOPT",
   "DEVICE",
   "PYTHONPATH",
+  "PATH",
+  "CUDA_PATH",
+  "CC",
 )
+
+TOOL_NAMES = ("clang", "clang++", "nvcc", "ptxas", "nvdisasm", "clinfo")
 
 
 def _jsonable(value: Any) -> Any:
@@ -84,13 +90,26 @@ def model_files(model_dir: Path) -> dict[str, Any]:
   return files
 
 
-def error_chain(exc: BaseException) -> list[dict[str, str]]:
-  chain: list[dict[str, str]] = []
+def tool_paths() -> dict[str, str | None]:
+  return {name: shutil.which(name) for name in TOOL_NAMES}
+
+
+def _exception_details(exc: BaseException) -> dict[str, Any]:
+  details: dict[str, Any] = {"type": type(exc).__name__, "message": str(exc)}
+  for attr in ("errno", "winerror", "filename", "filename2", "strerror"):
+    value = getattr(exc, attr, None)
+    if value is not None:
+      details[attr] = _jsonable(value)
+  return details
+
+
+def error_chain(exc: BaseException) -> list[dict[str, Any]]:
+  chain: list[dict[str, Any]] = []
   current: BaseException | None = exc
   seen: set[int] = set()
   while current is not None and id(current) not in seen:
     seen.add(id(current))
-    chain.append({"type": type(current).__name__, "message": str(current)})
+    chain.append(_exception_details(current))
     current = current.__cause__ or current.__context__
   return chain
 
@@ -116,6 +135,7 @@ def build_error_report(exc: BaseException, args: argparse.Namespace, phase: str,
     },
     "packages": package_versions(),
     "tinygrad": tinygrad_runtime(),
+    "tools": tool_paths(),
     "environment": {key: os.environ[key] for key in ENV_KEYS if key in os.environ},
     "files": {
       "dataset": file_info(Path(dataset)) if dataset is not None else None,
@@ -124,8 +144,7 @@ def build_error_report(exc: BaseException, args: argparse.Namespace, phase: str,
     },
     "extra": _jsonable(extra or {}),
     "error": {
-      "type": type(exc).__name__,
-      "message": str(exc),
+      **_exception_details(exc),
       "chain": error_chain(exc),
       "traceback": "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
     },
