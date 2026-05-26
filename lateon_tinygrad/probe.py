@@ -12,13 +12,16 @@ from typing import Any
 
 from .constants import DEFAULT_MODEL_DIR, MODEL_VARIANTS
 
-DEFAULT_DEVICES = ("NV", "AMD", "CL", "METAL", "CPU")
+ALL_CANDIDATE_DEVICES = ("NV", "AMD", "CL", "METAL", "CUDA", "QCOM", "WEBGPU", "CPU")
 ERROR_REPORT_RE = re.compile(r"LateOn error report:\s*(?P<path>.+)")
 
 
-def _split_devices(value: str) -> list[str]:
-  if value.lower() == "auto":
-    return list(DEFAULT_DEVICES)
+def _split_devices(value: str, discovered: list[str]) -> list[str]:
+  lowered = value.lower()
+  if lowered == "auto":
+    return discovered
+  if lowered == "all":
+    return list(ALL_CANDIDATE_DEVICES)
   devices = [device.strip().upper() for device in value.split(",") if device.strip()]
   if not devices:
     raise ValueError("--devices must contain at least one Tinygrad device")
@@ -41,6 +44,23 @@ def _error_report_path(stderr: str) -> str | None:
     if match:
       return match.group("path").strip()
   return None
+
+
+def _error_summary(report_path: str | None) -> dict[str, Any] | None:
+  if report_path is None:
+    return None
+  try:
+    report = json.loads(Path(report_path).read_text(encoding="utf-8"))
+  except Exception as exc:
+    return {"report_path": report_path, "read_error": f"{type(exc).__name__}: {exc}"}
+  error = report.get("error", {})
+  return {
+    "report_path": report_path,
+    "phase": report.get("phase"),
+    "type": error.get("type"),
+    "message": error.get("message"),
+    "chain": error.get("chain"),
+  }
 
 
 def _tail(text: str, lines: int = 30) -> str:
@@ -83,6 +103,39 @@ def _benchmark_command(args: argparse.Namespace, device: str, cache_db: Path) ->
   return cmd
 
 
+def _discover_devices(args: argparse.Namespace) -> dict[str, Any]:
+  cache_db = args.cache_dir / "discover.db"
+  code = (
+    "import json\n"
+    "from pathlib import Path\n"
+    "from lateon_tinygrad.env import ensure_tinygrad_cache\n"
+    f"ensure_tinygrad_cache(Path({str(cache_db)!r}))\n"
+    "from tinygrad import Device\n"
+    "devices = list(Device.get_available_devices())\n"
+    "print(json.dumps({'default': Device.DEFAULT, 'available': devices, 'known': sorted(Device._devices)}))\n"
+  )
+  completed = subprocess.run([sys.executable, "-c", code], text=True, capture_output=True, check=False)
+  if completed.returncode != 0:
+    return {
+      "status": "failed",
+      "available": [],
+      "returncode": completed.returncode,
+      "stdout_tail": _tail(completed.stdout),
+      "stderr_tail": _tail(completed.stderr),
+    }
+  try:
+    data = json.loads(completed.stdout)
+  except json.JSONDecodeError as exc:
+    return {
+      "status": "failed",
+      "available": [],
+      "returncode": completed.returncode,
+      "stdout_tail": _tail(completed.stdout),
+      "stderr_tail": f"could not parse discovery JSON: {exc}\n{_tail(completed.stderr)}",
+    }
+  return {"status": "ok", **data}
+
+
 def _run_device(args: argparse.Namespace, device: str) -> dict[str, Any]:
   cache_db = args.cache_dir / f"{device.lower()}.db"
   cmd = _benchmark_command(args, device=device, cache_db=cache_db)
@@ -93,6 +146,7 @@ def _run_device(args: argparse.Namespace, device: str) -> dict[str, Any]:
   elapsed = time.perf_counter() - start
   summary = _json_from_stdout(completed.stdout)
   report_path = _error_report_path(completed.stderr)
+  error = _error_summary(report_path)
 
   result: dict[str, Any] = {
     "device": device,
@@ -103,6 +157,8 @@ def _run_device(args: argparse.Namespace, device: str) -> dict[str, Any]:
     "cache_db": str(cache_db),
     "error_report": report_path,
   }
+  if error is not None:
+    result["error"] = error
   if summary is not None:
     result["summary"] = summary
   if completed.returncode != 0:
@@ -123,7 +179,7 @@ def main(argv: list[str] | None = None) -> None:
   parser = argparse.ArgumentParser(description="Probe Tinygrad backends and benchmark LateOn on each usable device.")
   parser.add_argument("--model-dir", type=Path, default=DEFAULT_MODEL_DIR)
   parser.add_argument("--variant", choices=sorted(MODEL_VARIANTS), default="fp32")
-  parser.add_argument("--devices", default="auto", help="comma-separated Tinygrad devices, or auto for NV,AMD,CL,METAL,CPU")
+  parser.add_argument("--devices", default="auto", help="auto uses Tinygrad-discovered usable devices; all tries common candidates; or pass comma-separated devices")
   parser.add_argument("--dataset", type=Path, default=None)
   parser.add_argument("--kind", choices=("query", "document"), default="query")
   parser.add_argument("--batch-size", type=int, default=1)
@@ -139,9 +195,12 @@ def main(argv: list[str] | None = None) -> None:
   parser.add_argument("--print-traceback", action="store_true")
   args = parser.parse_args(argv)
 
-  devices = _split_devices(args.devices)
   args.cache_dir.mkdir(parents=True, exist_ok=True)
   args.error_log_dir.mkdir(parents=True, exist_ok=True)
+  discovery = _discover_devices(args)
+  devices = _split_devices(args.devices, discovered=[str(device).upper() for device in discovery.get("available", [])])
+  if not devices:
+    print("[lateon-probe] no devices discovered; use --devices all or --devices CPU to force candidates", file=sys.stderr)
 
   results: list[dict[str, Any]] = []
   for device in devices:
@@ -165,6 +224,7 @@ def main(argv: list[str] | None = None) -> None:
     "sequence_length": args.length,
     "warmup": args.warmup,
     "iters": args.iters,
+    "device_discovery": discovery,
     "devices_requested": devices,
     "ok_count": len(ok_results),
     "failed_count": len(failed_results),

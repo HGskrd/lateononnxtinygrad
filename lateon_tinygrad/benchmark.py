@@ -63,7 +63,7 @@ def _preflight_device(device: str | None) -> None:
   try:
     (Tensor([1.0], device=device) + 1).realize().numpy()
   except Exception as exc:
-    raise RuntimeError(f"Tinygrad device {device!r} is not usable on this machine") from exc
+    raise RuntimeError(f"Tinygrad device {device!r} is not usable on this machine: {type(exc).__name__}: {exc}") from exc
 
 
 def _set_phase(args: argparse.Namespace, phase: str, **extra: object) -> None:

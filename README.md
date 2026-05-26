@@ -42,7 +42,7 @@ Run one command that explores common hardware backends and benchmarks each one t
 python3 -m lateon_tinygrad.probe --model-dir models/lightonai-LateOn --dataset data/synthetic_lateon.jsonl --kind query --batch-size 1 --length 32 --warmup 1 --iters 5
 ```
 
-By default this tests `NV`, `AMD`, `CL`, `METAL`, then `CPU`, records per-device results in `benchmarks/lateon_probe.jsonl`, writes a summary to `benchmarks/lateon_probe_summary.json`, and writes backend failure reports under `benchmarks/error_reports/`. Use `--devices CL,AMD` to narrow the list, or `--stop-after-first-success` when you only need the first working backend.
+By default this asks Tinygrad for discovered usable devices, benchmarks those devices, records per-device results in `benchmarks/lateon_probe.jsonl`, writes a summary to `benchmarks/lateon_probe_summary.json`, and writes backend failure reports under `benchmarks/error_reports/`. Use `--devices CL,AMD` to force a list, `--devices all` to try common backend candidates even if discovery did not report them, or `--stop-after-first-success` when you only need the first working backend.
 
 Run a short query benchmark on the Tinygrad default backend:
 
