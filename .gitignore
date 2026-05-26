@@ -1,0 +1,13 @@
+__pycache__/
+*.pyc
+.pytest_cache/
+.tinygrad-cache/
+
+# Hugging Face model binaries are downloaded locally, not committed.
+models/**/*.onnx
+models/**/*.tmp
+
+# Benchmark outputs can get large.
+benchmarks/*.jsonl
+benchmarks/error_reports/
+*.log
