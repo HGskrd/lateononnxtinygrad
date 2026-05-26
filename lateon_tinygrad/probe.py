@@ -136,6 +136,51 @@ def _discover_devices(args: argparse.Namespace) -> dict[str, Any]:
   return {"status": "ok", **data}
 
 
+def _runtime_check(args: argparse.Namespace) -> dict[str, Any]:
+  cache_db = args.cache_dir / "runtime_check.db"
+  code = (
+    "import importlib.metadata, importlib.util, json\n"
+    "from pathlib import Path\n"
+    "from lateon_tinygrad.env import ensure_tinygrad_cache\n"
+    f"ensure_tinygrad_cache(Path({str(cache_db)!r}))\n"
+    "import tinygrad\n"
+    "spec = importlib.util.find_spec('tinygrad.nn.onnx')\n"
+    "try:\n"
+    "  version = importlib.metadata.version('tinygrad')\n"
+    "except importlib.metadata.PackageNotFoundError:\n"
+    "  version = 'unknown'\n"
+    "print(json.dumps({\n"
+    "  'tinygrad_file': getattr(tinygrad, '__file__', None),\n"
+    "  'tinygrad_version': version,\n"
+    "  'onnx_runner_available': spec is not None,\n"
+    "  'onnx_runner_origin': None if spec is None else spec.origin,\n"
+    "}))\n"
+  )
+  completed = subprocess.run([sys.executable, "-c", code], text=True, capture_output=True, check=False)
+  if completed.returncode != 0:
+    return {
+      "status": "failed",
+      "returncode": completed.returncode,
+      "stdout_tail": _tail(completed.stdout),
+      "stderr_tail": _tail(completed.stderr),
+    }
+  try:
+    data = json.loads(completed.stdout)
+  except json.JSONDecodeError as exc:
+    return {
+      "status": "failed",
+      "returncode": completed.returncode,
+      "stdout_tail": _tail(completed.stdout),
+      "stderr_tail": f"could not parse runtime-check JSON: {exc}\n{_tail(completed.stderr)}",
+    }
+  if not data.get("onnx_runner_available"):
+    data["status"] = "failed"
+    data["message"] = "installed tinygrad does not provide tinygrad.nn.onnx.OnnxRunner"
+  else:
+    data["status"] = "ok"
+  return data
+
+
 def _run_device(args: argparse.Namespace, device: str) -> dict[str, Any]:
   cache_db = args.cache_dir / f"{device.lower()}.db"
   cmd = _benchmark_command(args, device=device, cache_db=cache_db)
@@ -198,18 +243,22 @@ def main(argv: list[str] | None = None) -> None:
   args.cache_dir.mkdir(parents=True, exist_ok=True)
   args.error_log_dir.mkdir(parents=True, exist_ok=True)
   discovery = _discover_devices(args)
+  runtime_check = _runtime_check(args)
   devices = _split_devices(args.devices, discovered=[str(device).upper() for device in discovery.get("available", [])])
   if not devices:
     print("[lateon-probe] no devices discovered; use --devices all or --devices CPU to force candidates", file=sys.stderr)
 
   results: list[dict[str, Any]] = []
-  for device in devices:
-    result = _run_device(args, device)
-    results.append(result)
-    if args.jsonl is not None:
-      _write_jsonl(args.jsonl, [result])
-    if args.stop_after_first_success and result["status"] == "ok":
-      break
+  if runtime_check.get("status") != "ok":
+    print(f"[lateon-probe] dependency check failed: {runtime_check.get('message', runtime_check)}", file=sys.stderr)
+  else:
+    for device in devices:
+      result = _run_device(args, device)
+      results.append(result)
+      if args.jsonl is not None:
+        _write_jsonl(args.jsonl, [result])
+      if args.stop_after_first_success and result["status"] == "ok":
+        break
 
   ok_results = [result for result in results if result["status"] == "ok"]
   failed_results = [result for result in results if result["status"] != "ok"]
@@ -225,6 +274,7 @@ def main(argv: list[str] | None = None) -> None:
     "warmup": args.warmup,
     "iters": args.iters,
     "device_discovery": discovery,
+    "runtime_check": runtime_check,
     "devices_requested": devices,
     "ok_count": len(ok_results),
     "failed_count": len(failed_results),

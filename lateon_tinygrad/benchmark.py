@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
 import sys
@@ -66,6 +67,19 @@ def _preflight_device(device: str | None) -> None:
     raise RuntimeError(f"Tinygrad device {device!r} is not usable on this machine: {type(exc).__name__}: {exc}") from exc
 
 
+def _preflight_tinygrad_onnx() -> None:
+  try:
+    import tinygrad
+  except Exception as exc:
+    raise RuntimeError(f"tinygrad is not importable: {type(exc).__name__}: {exc}") from exc
+  if importlib.util.find_spec("tinygrad.nn.onnx") is None:
+    tinygrad_path = getattr(tinygrad, "__file__", "unknown")
+    raise RuntimeError(
+      "installed tinygrad does not provide tinygrad.nn.onnx.OnnxRunner; "
+      f"tinygrad imported from {tinygrad_path}. Install a tinygrad build that includes tinygrad/nn/onnx.py."
+    )
+
+
 def _set_phase(args: argparse.Namespace, phase: str, **extra: object) -> None:
   args._diagnostic_phase = phase
   args._diagnostic_extra = {**getattr(args, "_diagnostic_extra", {}), **extra}
@@ -122,6 +136,8 @@ def _run(args: argparse.Namespace) -> None:
 
   _set_phase(args, "configure_tinygrad_cache")
   cache_db = ensure_tinygrad_cache(args.cache_db)
+  _set_phase(args, "preflight_tinygrad_onnx")
+  _preflight_tinygrad_onnx()
   from tinygrad import Device
   from .model import LateOnONNX, first_output
 

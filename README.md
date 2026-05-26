@@ -10,7 +10,7 @@ The implementation uses `tinygrad.nn.onnx.OnnxRunner`, so it runs through Tinygr
 python3 -m pip install -r requirements.txt
 ```
 
-The current workspace already has `tinygrad`, `tokenizers`, and `numpy` installed.
+This runner requires a Tinygrad build that includes `tinygrad.nn.onnx.OnnxRunner`; `requirements.txt` asks for `tinygrad>=0.12.0`. If `probe` reports `installed tinygrad does not provide tinygrad.nn.onnx.OnnxRunner`, install a Tinygrad source/wheel build that contains `tinygrad/nn/onnx.py`.
 
 ## Download Model
 
