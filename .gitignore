@@ -9,5 +9,6 @@ models/**/*.tmp
 
 # Benchmark outputs can get large.
 benchmarks/*.jsonl
+benchmarks/*.json
 benchmarks/error_reports/
 *.log
